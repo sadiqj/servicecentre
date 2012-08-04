@@ -12,10 +12,9 @@ import java.util.Map.Entry;
 import java.util.Set;
 
 import javax.annotation.Nullable;
-import javax.inject.Inject;
-import javax.inject.Singleton;
 
 import org.reflections.Reflections;
+import org.reflections.util.ClasspathHelper;
 import org.reflections.util.ConfigurationBuilder;
 import org.reflections.util.FilterBuilder;
 import org.slf4j.Logger;
@@ -27,56 +26,65 @@ import com.google.common.collect.ArrayListMultimap;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Multimap;
+import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.ListenableFuture;
 import com.google.common.util.concurrent.Service;
-import com.google.common.util.concurrent.Service.State;
 import com.google.inject.ConfigurationException;
+import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.ProvisionException;
+import com.google.inject.Singleton;
 import com.toao.servicecentre.annotations.ManagedService;
 
 @Singleton
-public class ServiceCentre {
+public class ServiceCentre extends AbstractIdleService {
 	private static Logger sLogger = LoggerFactory.getLogger(ServiceCentre.class);
 	private final Injector injector;
 	private final Multimap<Integer, Service> services = ArrayListMultimap.create();
+	private String[] scanPackages;
 
 	@Inject
 	public ServiceCentre(Injector injector) {
 		this.injector = injector;
+		this.scanPackages = new String[0];
 	}
 
-	public void start(String... scanPackages) {
+	public void onlyIncludePackages(String... scanPackages) {
+		this.scanPackages = scanPackages;
+	}
+
+	protected void startUp() {
 		// Build our configuration for Reflections. We're only going to look at the
 		// classes in the provided scanPackages strings
 		ConfigurationBuilder builder = new ConfigurationBuilder();
-		FilterBuilder filterBuilder = new FilterBuilder();
 
-		for (String scanPackage : scanPackages) {
-			filterBuilder.include(FilterBuilder.prefix(scanPackage));
+		if (scanPackages.length > 0) {
+			FilterBuilder filterBuilder = new FilterBuilder();
+
+			for (String scanPackage : scanPackages) {
+				sLogger.debug("Including package {} in classes to scan", scanPackages);
+				filterBuilder.include(FilterBuilder.prefix(scanPackage));
+			}
+
+			builder.filterInputsBy(filterBuilder);
 		}
 
-		builder.filterInputsBy(filterBuilder);
+		builder.setUrls(ClasspathHelper.forJavaClassPath());
+
 		Reflections reflections = new Reflections(builder);
 
 		// Now find classes that do both
 		Set<Class<?>> managedServices = reflections.getTypesAnnotatedWith(ManagedService.class);
-		
+
+		sLogger.debug("Found {} classes with ManagedService annotation", managedServices.size());
+
 		// Check that each managed service implements Service and has a Singleton annotation
-		for( Class<?> managedService : managedServices )
-		{
-			boolean hasJavaxSingleton = (managedService.getAnnotation(javax.inject.Singleton.class) != null);
-			boolean hasGuiceSingleton = (managedService.getAnnotation(com.google.inject.Singleton.class) != null);
-			
-			if( !(hasJavaxSingleton || hasGuiceSingleton) )
-			{
-				throw new ServiceCentreInitialisationException("ManagedService " + managedService + " is not a Singleton.", null);
-			}
-			
+		for (Class<?> managedService : managedServices) {
 			boolean hasService = Arrays.asList(managedService.getInterfaces()).contains(Service.class);
-			
-			if( !hasService )
-			{
+
+			sLogger.debug("ManageService annotated type {} implements Service interface = {}", managedService.getClass().getSimpleName(), hasService);
+
+			if (!hasService) {
 				throw new ServiceCentreInitialisationException("ManagedService " + managedService + " does not implement the Guava Service interface", null);
 			}
 		}
@@ -90,9 +98,20 @@ public class ServiceCentre {
 			// We have the level, now we need to get an instance of the class that actually
 			// is bound to this interface in Guice.
 			try {
-				Service serviceKlass = (Service) injector.getInstance(interfaceKlass);
+				Service service = (Service) injector.getInstance(interfaceKlass);
 
-				services.put(level, serviceKlass);
+				if (sLogger.isDebugEnabled()) {
+					Class<? extends Service> serviceKlass = service.getClass();
+
+					boolean hasJavaxSingleton = (serviceKlass.getAnnotation(javax.inject.Singleton.class) != null);
+					boolean hasGuiceSingleton = (serviceKlass.getAnnotation(com.google.inject.Singleton.class) != null);
+
+					if (!(hasJavaxSingleton || hasGuiceSingleton)) {
+						sLogger.debug("Instance of ManagedService " + interfaceKlass + " (" + serviceKlass + ") is not a Singleton.");
+					}
+				}
+
+				services.put(level, service);
 			} catch (ConfigurationException e) {
 				String msg = "Unable to find binding for service " + interfaceKlass + " in Guice: " + e.getMessage();
 				sLogger.error(msg, e);
@@ -103,116 +122,112 @@ public class ServiceCentre {
 				throw new ServiceCentreInitialisationException(msg, e);
 			}
 		}
-		
+
 		// Now we should have all of the classes implementing the service interfaces
 		// in our multimap. Now we need to get a sorted list of all the levels and
 		// then start each level.
-		
+
 		List<Integer> levels = Lists.newArrayList(services.keySet());
-		
+
 		Collections.sort(levels);
-		
-		for( int level : levels )
-		{
+
+		for (int level : levels) {
 			Collection<Service> levelServices = services.get(level);
 
 			String names = getNiceNames(levelServices);
-			
+
 			sLogger.info("Starting level {} with services: {}", level, names);
-			
-			Map<Service,Throwable> failedServices = Collections.synchronizedMap(new HashMap<Service,Throwable>());
-			
-			Map<Service,ListenableFuture<State>> futures = Maps.newHashMap(); 
-			
+
+			Map<Service, Throwable> failedServices = Collections.synchronizedMap(new HashMap<Service, Throwable>());
+
+			Map<Service, ListenableFuture<State>> futures = Maps.newHashMap();
+
 			// Start each service and add the ListenableFuture to the set of
 			// futures to wait for
-			for( final Service levelService : levelServices )
-			{
-				 ListenableFuture<State> startedFuture = levelService.start();
-				 
-				 futures.put(levelService, startedFuture);
+			for (final Service levelService : levelServices) {
+				sLogger.debug("Starting service {} at level {}", levelService.getClass().getSimpleName(), level);
+				try {
+					ListenableFuture<State> startedFuture = levelService.start();
+
+					futures.put(levelService, startedFuture);
+				} catch (Exception e) {
+					// We may get an error as soon as we call start(), need to deal with it
+					failedServices.put(levelService, e);
+				}
 			}
-			
+
 			// Now wait for all my lovelies to complete
-			for( Entry<Service, ListenableFuture<State>> entry : futures.entrySet() )
-			{
+			for (Entry<Service, ListenableFuture<State>> entry : futures.entrySet()) {
 				try {
 					entry.getValue().get();
 				} catch (Exception e) {
 					failedServices.put(entry.getKey(), e);
 				}
 			}
-			
+
 			// Check to see if there were any failed services
-			if( failedServices.size() > 0 )
-			{
+			if (failedServices.size() > 0) {
 				sLogger.error("Services {} failed startup at level {}", getNiceNames(failedServices.keySet()), level);
 				throw new ServicesFailedException(failedServices);
 			}
-			
+
 		}
-		
+
 		sLogger.info("All services stopped successfully");
 	}
-	
-	public void shutdown()
-	{
+
+	protected void shutDown() {
 		// Need to go through all our levels backwards
 		List<Integer> levels = Lists.newArrayList(services.keySet());
-		
+
 		Collections.sort(levels);
-		
-		Lists.reverse(levels);
-		
+
+		levels = Lists.reverse(levels);
+
 		// Here the failed services is only thrown at the end, since we still want
 		// to shutdown all of our services, even if some other ones throw an exception
 		// earlier.
-		Map<Service,Throwable> failedServices = Collections.synchronizedMap(new HashMap<Service,Throwable>());
-		
+		Map<Service, Throwable> failedServices = Collections.synchronizedMap(new HashMap<Service, Throwable>());
+
 		int previousLevelFailures = 0;
-		
-		for( int level : levels )
-		{
+
+		for (int level : levels) {
 			Collection<Service> levelServices = services.get(level);
 
 			String names = getNiceNames(levelServices);
-			
+
 			sLogger.info("Shutting down level {} with services: {}", level, names);
-						
-			Map<Service,ListenableFuture<State>> futures = Maps.newHashMap(); 
-			
+
+			Map<Service, ListenableFuture<State>> futures = Maps.newHashMap();
+
 			// Start each service and add the ListenableFuture to the set of
 			// futures to wait for
-			for( final Service levelService : levelServices )
-			{
-				 ListenableFuture<State> stoppedFuture = levelService.stop();
-				 
-				 futures.put(levelService, stoppedFuture);
+			for (final Service levelService : levelServices) {
+				ListenableFuture<State> stoppedFuture = levelService.stop();
+
+				futures.put(levelService, stoppedFuture);
 			}
-			
-			// Now wait for all my lovelies to complete
-			for( Entry<Service, ListenableFuture<State>> entry : futures.entrySet() )
-			{
+
+			// Now wait for all my lovelies to stop
+			for (Entry<Service, ListenableFuture<State>> entry : futures.entrySet()) {
 				try {
 					entry.getValue().get();
 				} catch (Exception e) {
 					failedServices.put(entry.getKey(), e);
 				}
 			}
-			
+
 			// Check to see if there were any failed services
-			if( failedServices.size() > previousLevelFailures )
-			{
-				sLogger.error("Services {} failed startup at level {}", getNiceNames(failedServices.keySet()), level);
+			if (failedServices.size() > previousLevelFailures) {
+				sLogger.error("Services {} failed shutdown at level {}", getNiceNames(failedServices.keySet()), level);
 				previousLevelFailures = failedServices.size();
 			}
 		}
-		
-		if( failedServices.size() > 0 )
-		{
+
+		if (failedServices.size() > 0) {
 			throw new ServicesFailedException(failedServices);
 		}
-		
+
 		sLogger.info("All services shut down successfully.");
 	}
 
@@ -227,7 +242,7 @@ public class ServiceCentre {
 
 	@SuppressWarnings("serial")
 	public static class ServicesFailedException extends RuntimeException {
-		private final Map<Service,Throwable> failedServices;
+		private final Map<Service, Throwable> failedServices;
 
 		public ServicesFailedException(Map<Service, Throwable> failedServices) {
 			super(getNiceNames(failedServices.keySet()));
@@ -237,16 +252,19 @@ public class ServiceCentre {
 		@Override
 		public Throwable getCause() {
 			// Throw the first err we have. Not correct though.
-			for( Throwable err : failedServices.values() )
-			{
+			for (Throwable err : getFailedServices().values()) {
 				return err;
 			}
-			
+
 			// No errs, return null (this should never happen)
 			return null;
 		}
+
+		public Map<Service, Throwable> getFailedServices() {
+			return failedServices;
+		}
 	}
-	
+
 	@SuppressWarnings("serial")
 	public static class ServiceCentreInitialisationException extends RuntimeException {
 		public ServiceCentreInitialisationException(String message, Throwable cause) {

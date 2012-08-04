@@ -1,18 +1,26 @@
 package com.toao.servicecentre;
 
+import static junit.framework.Assert.assertEquals;
+import static junit.framework.Assert.fail;
+
+import java.util.Map;
+import java.util.Map.Entry;
+
 import org.junit.Test;
-import org.mockito.InOrder;
 import org.mockito.Mockito;
 
+import com.google.common.util.concurrent.Service;
+import com.google.common.util.concurrent.UncheckedExecutionException;
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import com.google.inject.Module;
+import com.toao.servicecentre.ServiceCentre.ServicesFailedException;
 import com.toao.servicecentre.testone.ServiceOne;
 import com.toao.servicecentre.testone.ServiceThree;
 import com.toao.servicecentre.testone.ServiceTwo;
 
-public class TestOne {
+public class TestTwo {
 	@Test
 	public void test() {
 		final ServiceOne testServiceOne = Mockito.mock(ServiceOne.class);
@@ -27,12 +35,12 @@ public class TestOne {
 				bind(ServiceThree.class).toInstance(testServiceThree);
 			}
 		};
-
-		DummyFuture dummyFuture = new DummyFuture();
 		
+		DummyFuture dummyFuture = new DummyFuture();
+
 		Mockito.when(testServiceOne.start()).thenReturn(dummyFuture);
 		Mockito.when(testServiceTwo.start()).thenReturn(dummyFuture);
-		Mockito.when(testServiceThree.start()).thenReturn(dummyFuture);
+		Mockito.when(testServiceThree.start()).thenReturn(new ExceptionThrowingFuture());
 		Mockito.when(testServiceOne.stop()).thenReturn(dummyFuture);
 		Mockito.when(testServiceTwo.stop()).thenReturn(dummyFuture);
 		Mockito.when(testServiceThree.stop()).thenReturn(dummyFuture);
@@ -41,19 +49,25 @@ public class TestOne {
 
 		ServiceCentre serviceCentre = injector.getInstance(ServiceCentre.class);
 
-		serviceCentre.onlyIncludePackages("com.toao.servicecentre.testone");
-		
-		serviceCentre.startAndWait();
-		
-		serviceCentre.shutDown();
-
-		InOrder inOrder = Mockito.inOrder(testServiceOne, testServiceTwo, testServiceThree);
-
-		inOrder.verify(testServiceOne).start();
-		inOrder.verify(testServiceTwo).start();
-		inOrder.verify(testServiceThree).start();
-		inOrder.verify(testServiceThree).stop();
-		inOrder.verify(testServiceTwo).stop();
-		inOrder.verify(testServiceOne).stop();
+		try {
+			serviceCentre.onlyIncludePackages("com.toao.servicecentre.testone");
+			
+			serviceCentre.startAndWait();
+			// If we don't get an exception, we've failed as one of our
+			// mocked services throws an exception on startup 
+			fail();  
+		} catch (UncheckedExecutionException e) {
+			ServicesFailedException cause = (ServicesFailedException)e.getCause();
+			Map<Service, Throwable> failedServices = cause.getFailedServices();
+			
+			assertEquals("number of failed services is 1", 1, failedServices.size());
+			
+			for( Entry<Service, Throwable> entry : failedServices.entrySet() )
+			{
+				Service service = entry.getKey();
+				
+				assertEquals("Failed service is ServiceThree", true, service.equals(testServiceThree));
+			}
+		}
 	}
 }
