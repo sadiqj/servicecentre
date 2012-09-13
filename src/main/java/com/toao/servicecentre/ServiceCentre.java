@@ -1,8 +1,7 @@
 package com.toao.servicecentre;
 
-import static com.google.common.collect.Iterables.transform;
+import static com.google.common.collect.Iterables.*;
 
-import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
@@ -10,8 +9,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Set;
-
-import javax.annotation.Nullable;
 
 import org.reflections.Reflections;
 import org.reflections.util.ClasspathHelper;
@@ -34,7 +31,6 @@ import com.google.inject.Inject;
 import com.google.inject.Injector;
 import com.google.inject.ProvisionException;
 import com.google.inject.Singleton;
-import com.toao.servicecentre.annotations.ManagedService;
 
 @Singleton
 public class ServiceCentre extends AbstractIdleService {
@@ -54,6 +50,8 @@ public class ServiceCentre extends AbstractIdleService {
 	}
 
 	protected void startUp() {
+		long start = System.currentTimeMillis();
+		
 		// Build our configuration for Reflections. We're only going to look at the
 		// classes in the provided scanPackages strings
 		ConfigurationBuilder builder = new ConfigurationBuilder();
@@ -71,6 +69,8 @@ public class ServiceCentre extends AbstractIdleService {
 
 		builder.setUrls(ClasspathHelper.forJavaClassPath());
 
+		sLogger.info("Scanning classpath for services..");
+
 		Reflections reflections = new Reflections(builder);
 
 		// Now find classes that do both
@@ -78,11 +78,11 @@ public class ServiceCentre extends AbstractIdleService {
 
 		sLogger.debug("Found {} classes with ManagedService annotation", managedServices.size());
 
-		// Check that each managed service implements Service and has a Singleton annotation
+		// Check that each managed service implements Service
 		for (Class<?> managedService : managedServices) {
-			boolean hasService = Arrays.asList(managedService.getInterfaces()).contains(Service.class);
+			boolean hasService = Service.class.isAssignableFrom(managedService);
 
-			sLogger.debug("ManageService annotated type {} implements Service interface = {}", managedService.getClass().getSimpleName(), hasService);
+			sLogger.debug("ManageService annotated type {} implements Service interface = {}", managedService.getSimpleName(), hasService);
 
 			if (!hasService) {
 				throw new ServiceCentreInitialisationException("ManagedService " + managedService + " does not implement the Guava Service interface", null);
@@ -173,10 +173,11 @@ public class ServiceCentre extends AbstractIdleService {
 
 		}
 
-		sLogger.info("All services stopped successfully");
+		sLogger.info("All services started successfully in {}ms", (System.currentTimeMillis() - start));
 	}
 
 	protected void shutDown() {
+		long start = System.currentTimeMillis();
 		// Need to go through all our levels backwards
 		List<Integer> levels = Lists.newArrayList(services.keySet());
 
@@ -211,6 +212,7 @@ public class ServiceCentre extends AbstractIdleService {
 			// Now wait for all my lovelies to stop
 			for (Entry<Service, ListenableFuture<State>> entry : futures.entrySet()) {
 				try {
+					sLogger.debug("Checking service {} has shut down..", entry.getKey().getClass().getSimpleName());
 					entry.getValue().get();
 				} catch (Exception e) {
 					failedServices.put(entry.getKey(), e);
@@ -228,13 +230,12 @@ public class ServiceCentre extends AbstractIdleService {
 			throw new ServicesFailedException(failedServices);
 		}
 
-		sLogger.info("All services shut down successfully.");
+		sLogger.info("All services shut down successfully in {}ms", (System.currentTimeMillis() - start));
 	}
 
 	private static String getNiceNames(Collection<Service> levelServices) {
 		return Joiner.on(",").join(transform(levelServices, new Function<Service, String>() {
-			@Nullable
-			public String apply(@Nullable Service service) {
+			public String apply(Service service) {
 				return service.getClass().getSimpleName();
 			}
 		}));
