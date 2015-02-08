@@ -1,59 +1,68 @@
 package com.toao.servicecentre;
 
-import org.junit.Test;
-import org.mockito.InOrder;
-import org.mockito.Mockito;
-
+import com.google.common.util.concurrent.Service;
 import com.google.inject.AbstractModule;
 import com.google.inject.Guice;
 import com.google.inject.Injector;
 import com.google.inject.Module;
+import com.google.inject.multibindings.Multibinder;
+import com.google.inject.name.Named;
+import com.google.inject.name.Names;
 import com.toao.servicecentre.testone.ServiceOne;
 import com.toao.servicecentre.testone.ServiceThree;
 import com.toao.servicecentre.testone.ServiceTwo;
+import org.junit.Test;
+import org.mockito.InOrder;
+import org.mockito.Mockito;
+
+import static org.mockito.Mockito.*;
 
 public class TestOne {
-	@Test
-	public void test() {
-		final ServiceOne testServiceOne = Mockito.mock(ServiceOne.class);
-		final ServiceTwo testServiceTwo = Mockito.mock(ServiceTwo.class);
-		final ServiceThree testServiceThree = Mockito.mock(ServiceThree.class);
+    @Test
+    public void test() {
+        final ServiceOne testServiceOne = mock(ServiceOne.class);
+        final ServiceTwo testServiceTwo = mock(ServiceTwo.class);
+        final ServiceThree testServiceThree = mock(ServiceThree.class);
 
-		Module testOneModule = new AbstractModule() {
-			@Override
-			protected void configure() {
-				bind(ServiceOne.class).toInstance(testServiceOne);
-				bind(ServiceTwo.class).toInstance(testServiceTwo);
-				bind(ServiceThree.class).toInstance(testServiceThree);
-			}
-		};
+        Module testOneModule = new AbstractModule() {
+            @Override
+            protected void configure() {
+                bind(ServiceOne.class).toInstance(testServiceOne);
+                bind(ServiceTwo.class).toInstance(testServiceTwo);
+                bind(ServiceThree.class).toInstance(testServiceThree);
 
-		DummyFuture dummyFuture = new DummyFuture();
-		
-		Mockito.when(testServiceOne.start()).thenReturn(dummyFuture);
-		Mockito.when(testServiceTwo.start()).thenReturn(dummyFuture);
-		Mockito.when(testServiceThree.start()).thenReturn(dummyFuture);
-		Mockito.when(testServiceOne.stop()).thenReturn(dummyFuture);
-		Mockito.when(testServiceTwo.stop()).thenReturn(dummyFuture);
-		Mockito.when(testServiceThree.stop()).thenReturn(dummyFuture);
+                Multibinder<Service> activeServices = Multibinder
+                    .newSetBinder(binder(), Service.class, Names.named("activeServices"));
 
-		Injector injector = Guice.createInjector(testOneModule);
+                activeServices.addBinding().toInstance(testServiceOne);
+                activeServices.addBinding().toInstance(testServiceTwo);
+                activeServices.addBinding().toInstance(testServiceThree);
+            }
+        };
 
-		ServiceCentre serviceCentre = injector.getInstance(ServiceCentre.class);
+        when(testServiceOne.startAsync()).thenReturn(testServiceOne);
+        when(testServiceTwo.startAsync()).thenReturn(testServiceTwo);
+        when(testServiceThree.startAsync()).thenReturn(testServiceThree);
+        when(testServiceOne.startAsync()).thenReturn(testServiceOne);
+        when(testServiceTwo.startAsync()).thenReturn(testServiceTwo);
+        when(testServiceThree.startAsync()).thenReturn(testServiceThree);
 
-		serviceCentre.onlyIncludePackages("com.toao.servicecentre.testone");
-		
-		serviceCentre.startAndWait();
-		
-		serviceCentre.shutDown();
 
-		InOrder inOrder = Mockito.inOrder(testServiceOne, testServiceTwo, testServiceThree);
+        Injector injector = Guice.createInjector(testOneModule);
 
-		inOrder.verify(testServiceOne).start();
-		inOrder.verify(testServiceTwo).start();
-		inOrder.verify(testServiceThree).start();
-		inOrder.verify(testServiceThree).stop();
-		inOrder.verify(testServiceTwo).stop();
-		inOrder.verify(testServiceOne).stop();
-	}
+        ServiceCentre serviceCentre = injector.getInstance(ServiceCentre.class);
+
+        serviceCentre.startAsync().awaitRunning();
+
+        serviceCentre.shutDown();
+
+        InOrder inOrder = inOrder(testServiceOne, testServiceTwo, testServiceThree);
+
+        inOrder.verify(testServiceOne).startAsync();
+        inOrder.verify(testServiceTwo).startAsync();
+        inOrder.verify(testServiceThree).startAsync();
+        inOrder.verify(testServiceThree).stopAsync();
+        inOrder.verify(testServiceTwo).stopAsync();
+        inOrder.verify(testServiceOne).stopAsync();
+    }
 }

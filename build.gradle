@@ -1,0 +1,22 @@
+apply(plugin: 'java')
+apply(plugin: 'maven')
+apply(plugin: 'signing')
+
+repositories {
+    mavenCentral()
+}
+
+dependencies {
+    compile(
+            'com.google.inject:guice:3.0',
+            'org.slf4j:slf4j-api:1.7.10',
+            'ch.qos.logback:logback-classic:1.1.2',
+            'com.google.guava:guava:18.0',
+            'junit:junit:4.12',
+            'org.mockito:mockito-all:1.10.19',
+            'com.google.inject.extensions:guice-multibindings:3.0')
+}
+
+task wrapper(type: Wrapper) {
+    gradleVersion = '2.2.1'
+}

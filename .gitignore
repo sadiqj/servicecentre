@@ -2,3 +2,8 @@
 .project
 .classpath
 target
+gradle
+build
+.gradle
+.idea
+*.iml
