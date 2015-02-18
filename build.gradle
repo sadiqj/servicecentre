@@ -52,7 +52,7 @@ if( hasProperty('uploadArchives') )
                 beforeDeployment { MavenDeployment deployment -> signing.signPom(deployment) }
      
                 repository(url: "https://oss.sonatype.org/service/local/staging/deploy/maven2/") {
-                  authentication(userName: sonatypeUsername, password: sonatypePassword)
+                  authentication(userName: property('sonatypeUsername'), password: property('sonatypePassword'))
                 }
      
                 pom.project {
