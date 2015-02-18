@@ -44,7 +44,7 @@ task wrapper(type: Wrapper) {
     gradleVersion = '2.2.1'
 }
 
-if( hasProperty('uploadArchives') )
+if( hasProperty('shouldUploadArchives') )
 {
     uploadArchives {
         repositories {
