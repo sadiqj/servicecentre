@@ -44,42 +44,45 @@ task wrapper(type: Wrapper) {
     gradleVersion = '2.2.1'
 }
 
-uploadArchives {
-    repositories {
-        mavenDeployer {
-            beforeDeployment { MavenDeployment deployment -> signing.signPom(deployment) }
- 
-            repository(url: "https://oss.sonatype.org/service/local/staging/deploy/maven2/") {
-              authentication(userName: sonatypeUsername, password: sonatypePassword)
+if( hasProperty('uploadArchives') )
+{
+    uploadArchives {
+        repositories {
+            mavenDeployer {
+                beforeDeployment { MavenDeployment deployment -> signing.signPom(deployment) }
+     
+                repository(url: "https://oss.sonatype.org/service/local/staging/deploy/maven2/") {
+                  authentication(userName: sonatypeUsername, password: sonatypePassword)
+                }
+     
+                pom.project {
+                   name 'ServiceCentre'
+                   packaging 'jar'
+                   description 'Basic lifecycle management for Guava Services using Guice'
+                   url 'https://github.com/sadiqj/servicecentre'
+     
+                   scm {
+                       url 'scm:git@github.com:sadiqj/servicecentre.git'
+                       connection 'scm:git@github.com:sadiqj/servicecentre.git'
+                       developerConnection 'scm:git@github.com:sadiqj/servicecentre.git'
+                   }
+     
+                   licenses {
+                       license {
+                           name 'The Apache Software License, Version 2.0'
+                           url 'http://www.apache.org/licenses/LICENSE-2.0.txt'
+                           distribution 'repo'
+                       }
+                   }
+     
+                   developers {
+                       developer {
+                           id 'sadiqj'
+                           name 'Sadiq Jaffer'
+                       }
+                   }
+               }
             }
- 
-            pom.project {
-               name 'ServiceCentre'
-               packaging 'jar'
-               description 'Basic lifecycle management for Guava Services using Guice'
-               url 'https://github.com/sadiqj/servicecentre'
- 
-               scm {
-                   url 'scm:git@github.com:sadiqj/servicecentre.git'
-                   connection 'scm:git@github.com:sadiqj/servicecentre.git'
-                   developerConnection 'scm:git@github.com:sadiqj/servicecentre.git'
-               }
- 
-               licenses {
-                   license {
-                       name 'The Apache Software License, Version 2.0'
-                       url 'http://www.apache.org/licenses/LICENSE-2.0.txt'
-                       distribution 'repo'
-                   }
-               }
- 
-               developers {
-                   developer {
-                       id 'sadiqj'
-                       name 'Sadiq Jaffer'
-                   }
-               }
-           }
         }
     }
 }
