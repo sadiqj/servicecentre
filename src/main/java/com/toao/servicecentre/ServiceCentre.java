@@ -9,13 +9,15 @@ import com.google.common.collect.Sets;
 import com.google.common.util.concurrent.AbstractIdleService;
 import com.google.common.util.concurrent.Service;
 import com.google.inject.*;
-import com.google.inject.spi.*;
+import com.google.inject.name.Names;
 import com.toao.servicecentre.annotations.ManagedService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.annotation.Annotation;
 import java.util.*;
 import java.util.Map.Entry;
+import java.util.function.Predicate;
 
 import static com.google.common.collect.Iterables.transform;
 import static java.util.stream.Collectors.toSet;
@@ -34,66 +36,62 @@ public class ServiceCentre extends AbstractIdleService {
     protected void startUp() {
         long start = System.currentTimeMillis();
 
-        Map<Key<?>, Binding<?>> bindings = injector.getBindings();
+        TypeLiteral<Set<Service>> serviceTypeLiteral = new TypeLiteral<Set<Service>>() {
+        };
+        Key<Set<Service>> activeServicesKey = Key.get(serviceTypeLiteral, Names.named("activeServices"));
 
-        Set<Class<?>> boundClasses = bindings.values().stream()
-            .map(binding -> binding.getKey().getTypeLiteral().getRawType()).collect(toSet());
+        Set<Service> activeServices = injector.getInstance(activeServicesKey);
 
-        // Now find classes that do both
-        Set<Class<?>> managedServices = boundClasses.stream().filter(klass -> klass.isAnnotationPresent(ManagedService.class)).collect(toSet());
+        Set<Class<?>> boundClasses = activeServices.stream().map(Object::getClass).collect(toSet());
 
-        sLogger.debug("Found {} classes with ManagedService annotation", managedServices.size());
+        sLogger.debug("Found {} services in active services set", activeServices.size());
 
         // Check that each managed service implements Service
-        for (Class<?> managedService : managedServices) {
-            boolean hasService = Service.class.isAssignableFrom(managedService);
+        for (Class<?> boundService : boundClasses) {
+            boolean hasService = checkHierarchy(boundService, klass -> Service.class.isAssignableFrom(klass));
+            boolean hasManagedService = checkHierarchy(boundService, klass -> klass.isAnnotationPresent(ManagedService.class));
 
-            sLogger.debug("ManageService annotated type {} implements Service interface = {}", managedService.getSimpleName(), hasService);
+            sLogger.debug("ManageService annotated type {} implements Service interface = {}", boundService.getSimpleName(), hasService);
 
             if (!hasService) {
-                throw new ServiceCentreInitialisationException("ManagedService " + managedService + " does not implement the Guava Service interface", null);
+                throw new ServiceCentreInitialisationException("Service " + boundService + " does not implement the Guava Service interface", null);
+            } else if (!hasManagedService) {
+                throw new ServiceCentreInitialisationException("Service " + boundService + " does not contain a ManagedService annotation", null);
             }
         }
 
         // Add all the classes to their appropriate level
-        for (Class<?> interfaceKlass : managedServices) {
+        for (Service activeService : activeServices) {
             // Figure out which level, from the annotation
-            ManagedService managedServiceAnnotation = interfaceKlass.getAnnotation(ManagedService.class);
+            Optional<ManagedService> managedServiceAnnotationOptional = getAnnotationFromHierarchy(activeService.getClass(), ManagedService.class);
 
-            int level = managedServiceAnnotation.level();
-            // We have the level, now we need to get an instance of the class that actually
-            // is bound to this interface in Guice.
-            try {
-                Binding<?> binding = injector.getExistingBinding(Key.get(interfaceKlass));
+            if (managedServiceAnnotationOptional.isPresent()) {
+                int level = managedServiceAnnotationOptional.get().level();
+                // We have the level, now we need to get an instance of the class that actually
+                // is bound to this interface in Guice.
+                try {
+                    if (sLogger.isDebugEnabled()) {
+                        Class<? extends Service> serviceKlass = activeService.getClass();
 
-                if (binding == null) {
-                    // This means there was no explicitly bound service, we skip it
-                    // We should make this an option
-                    sLogger.debug("Skipped service {} as it has not been explicitly bound", interfaceKlass);
-                    continue;
-                }
-                Service service = (Service) binding.getProvider().get();
+                        boolean hasSingletonAnnotation = checkHierarchy(serviceKlass, klass -> klass.getAnnotation(javax.inject.Singleton.class) != null || klass.getAnnotation(com.google.inject.Singleton.class) != null);
 
-                if (sLogger.isDebugEnabled()) {
-                    Class<? extends Service> serviceKlass = service.getClass();
-
-                    boolean hasJavaxSingleton = (serviceKlass.getAnnotation(javax.inject.Singleton.class) != null);
-                    boolean hasGuiceSingleton = (serviceKlass.getAnnotation(com.google.inject.Singleton.class) != null);
-
-                    if (!(hasJavaxSingleton || hasGuiceSingleton)) {
-                        sLogger.debug("Instance of ManagedService " + interfaceKlass + " (" + serviceKlass + ") is not a Singleton.");
+                        if (!(hasSingletonAnnotation)) {
+                            sLogger.debug("Instance of ManagedService " + activeService + " (" + serviceKlass + ") is not a Singleton.");
+                        }
                     }
-                }
 
-                services.put(level, service);
-            } catch (ConfigurationException e) {
-                String msg = "Unable to find binding for service " + interfaceKlass + " in Guice: " + e.getMessage();
-                sLogger.error(msg, e);
-                throw new ServiceCentreInitialisationException(msg, e);
-            } catch (ProvisionException e) {
-                final String msg = "Guice unable to provide instance of service: " + interfaceKlass + ". " + e.getMessage();
-                sLogger.error(msg, e);
-                throw new ServiceCentreInitialisationException(msg, e);
+                    services.put(level, activeService);
+                } catch (ConfigurationException e) {
+                    String msg = "Unable to find binding for service " + activeService + " in Guice: " + e.getMessage();
+                    sLogger.error(msg, e);
+                    throw new ServiceCentreInitialisationException(msg, e);
+                } catch (ProvisionException e) {
+                    final String msg = "Guice unable to provide instance of service: " + activeService + ". " + e.getMessage();
+                    sLogger.error(msg, e);
+                    throw new ServiceCentreInitialisationException(msg, e);
+                }
+            } else {
+                throw new ServiceCentreInitialisationException("Could not find managed service annotation on class " + activeService.getClass() + " or its parents", null);
             }
         }
 
@@ -213,6 +211,38 @@ public class ServiceCentre extends AbstractIdleService {
                 return service.getClass().getSimpleName();
             }
         }));
+    }
+
+    private <T extends Annotation> Optional<T> getAnnotationFromHierarchy(Class klass, Class<T> annotation) {
+        do {
+            sLogger.debug("getAnnotationFromHierachy - looking for annotation {} in {}", annotation, klass);
+
+            if (klass.isAnnotationPresent(annotation)) {
+                return Optional.of(annotation.cast(klass.getAnnotation(annotation)));
+            }
+
+            klass = klass.getSuperclass();
+        }
+        while (klass != null);
+
+        return Optional.empty();
+    }
+
+    private boolean checkHierarchy(Class klass, Predicate<Class> check) {
+        do {
+            sLogger.debug("checkHierarchy - testing class {}", klass);
+            boolean result = check.test(klass);
+            sLogger.debug("checkHierarchy - result: {}", result);
+
+            if (result) {
+                return true;
+            }
+
+            klass = klass.getSuperclass();
+        }
+        while (klass != null);
+
+        return false;
     }
 
     @SuppressWarnings("serial")

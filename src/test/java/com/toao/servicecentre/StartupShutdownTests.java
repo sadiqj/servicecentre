@@ -7,61 +7,38 @@ import com.google.inject.Injector;
 import com.google.inject.Module;
 import com.google.inject.multibindings.Multibinder;
 import com.google.inject.name.Names;
-import com.toao.servicecentre.testone.ServiceOne;
-import com.toao.servicecentre.testone.ServiceThree;
-import com.toao.servicecentre.testone.ServiceTwo;
+import com.toao.servicecentre.testone.*;
 import org.junit.Before;
 import org.junit.Test;
-import org.mockito.InOrder;
-import org.mockito.Mockito;
 
 import java.util.Map;
 
 import static junit.framework.Assert.assertEquals;
 import static junit.framework.Assert.fail;
-import static org.mockito.Mockito.*;
 
 public class StartupShutdownTests {
-    final ServiceOne testServiceOne = mock(ServiceOne.class);
-    final ServiceTwo testServiceTwo = mock(ServiceTwo.class);
-    final ServiceThree testServiceThree = mock(ServiceThree.class);
     Module testModule;
 
     @Before
     public void setupServices()
     {
-        when(testServiceOne.startAsync()).thenReturn(testServiceOne);
-        when(testServiceTwo.startAsync()).thenReturn(testServiceTwo);
-        when(testServiceThree.startAsync()).thenReturn(testServiceThree);
-        when(testServiceOne.startAsync()).thenReturn(testServiceOne);
-        when(testServiceTwo.startAsync()).thenReturn(testServiceTwo);
-        when(testServiceThree.startAsync()).thenReturn(testServiceThree);
-
-        when(testServiceOne.stopAsync()).thenReturn(testServiceOne);
-        when(testServiceTwo.stopAsync()).thenReturn(testServiceTwo);
-        when(testServiceThree.stopAsync()).thenReturn(testServiceThree);
-        when(testServiceOne.stopAsync()).thenReturn(testServiceOne);
-        when(testServiceTwo.stopAsync()).thenReturn(testServiceTwo);
-        when(testServiceThree.stopAsync()).thenReturn(testServiceThree);
-
-        testModule = getModule(testServiceOne, testServiceTwo, testServiceThree);
+        testModule = getModule();
     }
 
-    private Module getModule(ServiceOne testServiceOne, ServiceTwo testServiceTwo,
-        ServiceThree testServiceThree) {
+    private Module getModule() {
         return new AbstractModule() {
             @Override
             protected void configure() {
-                bind(ServiceOne.class).toInstance(testServiceOne);
-                bind(ServiceTwo.class).toInstance(testServiceTwo);
-                bind(ServiceThree.class).toInstance(testServiceThree);
+                bind(ServiceOne.class).to(AbstractServiceOne.class);
+                bind(ServiceTwo.class).to(AbstractServiceTwo.class);
+                bind(ServiceThree.class).to(AbstractServiceThree.class);
 
                 Multibinder<Service> activeServices = Multibinder
                     .newSetBinder(binder(), Service.class, Names.named("activeServices"));
 
-                activeServices.addBinding().toInstance(testServiceOne);
-                activeServices.addBinding().toInstance(testServiceTwo);
-                activeServices.addBinding().toInstance(testServiceThree);
+                activeServices.addBinding().to(AbstractServiceOne.class);
+                activeServices.addBinding().to(AbstractServiceTwo.class);
+                activeServices.addBinding().to(AbstractServiceThree.class);
             }
         };
     }
@@ -75,22 +52,14 @@ public class StartupShutdownTests {
         serviceCentre.startAsync().awaitRunning();
 
         serviceCentre.shutDown();
-
-        InOrder inOrder = inOrder(testServiceOne, testServiceTwo, testServiceThree);
-
-        inOrder.verify(testServiceOne).startAsync();
-        inOrder.verify(testServiceTwo).startAsync();
-        inOrder.verify(testServiceThree).startAsync();
-        inOrder.verify(testServiceThree).stopAsync();
-        inOrder.verify(testServiceTwo).stopAsync();
-        inOrder.verify(testServiceOne).stopAsync();
     }
 
     @Test
     public void testFailingStart() {
-        doThrow(new IllegalStateException()).when(testServiceThree).awaitRunning();
-
         Injector injector = Guice.createInjector(testModule);
+
+        ServiceThree serviceThree = injector.getInstance(AbstractServiceThree.class);
+        serviceThree.setErrorOnStart();
 
         ServiceCentre serviceCentre = injector.getInstance(ServiceCentre.class);
 
@@ -110,16 +79,17 @@ public class StartupShutdownTests {
                 Service service = entry.getKey();
 
                 assertEquals("Failed service is ServiceThree", true,
-                    service.equals(testServiceThree));
+                    service.equals(serviceThree));
             }
         }
     }
 
     @Test
     public void testShutdownException() {
-        doThrow(new IllegalStateException()).when(testServiceThree).awaitTerminated();
-
         Injector injector = Guice.createInjector(testModule);
+
+        ServiceThree serviceThree = injector.getInstance(AbstractServiceThree.class);
+        serviceThree.setErrorOnShutdown();
 
         ServiceCentre serviceCentre = injector.getInstance(ServiceCentre.class);
 
@@ -143,7 +113,7 @@ public class StartupShutdownTests {
                 Service service = entry.getKey();
 
                 assertEquals("Failed service is ServiceThree", true,
-                    service.equals(testServiceThree));
+                    service.equals(serviceThree));
             }
         }
     }
