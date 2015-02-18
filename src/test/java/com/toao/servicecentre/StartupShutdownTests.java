@@ -51,7 +51,7 @@ public class StartupShutdownTests {
 
         serviceCentre.startAsync().awaitRunning();
 
-        serviceCentre.shutDown();
+        serviceCentre.stopAsync().awaitTerminated();
     }
 
     @Test

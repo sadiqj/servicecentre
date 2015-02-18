@@ -8,6 +8,8 @@ Each interface extending `Service` or class implementing `Service` can be given 
 
 When shutting down, ServiceCentre starts at the greatest level and shuts down all services in the level. ServiceCentre will proceed shutting down subsequent levels even if some services fail in shutting down. At the end of shutdown, if any services did fail to terminate correctly an exception is thrown.
 
+The set of active services that ServiceCentre needs to manage is specified through a Guice Multibinding of `Set<Service>` annotated with `activeServices`. See below for an example.
+
 ## Some examples
 
 ### Starting and stopping
@@ -18,18 +20,18 @@ When shutting down, ServiceCentre starts at the greatest level and shuts down al
     serviceCentre.onlyIncludePackages("package.containing.your.services"); 
     
     // ServiceCentre actually implements Guava's Service, so you can use .start() or .startAndWait()
-    serviceCentre.startAndWait(); 
+    serviceCentre.startAsync().awaitRunning();
     
     // Do stuff
     
     // Again, just one of Guava's Service methods. You could use .stop() too and listen on the future
-    serviceCentre.stopAndWait(); 
+    serviceCentre.stopAsync().awaitTerminated();
     
 ### Finding service failures
 
     try
     {
-      serviceCentre.startAndWait()
+        serviceCentre.startAsync().awaitRunning();
     }
     catch (UncheckedExecutionException e) {
       ServicesFailedException cause = (ServicesFailedException)e.getCause();
@@ -37,4 +39,21 @@ When shutting down, ServiceCentre starts at the greatest level and shuts down al
       // You can tell which services failed and why here
     }
     
-    
+### Guice binding
+
+Note that in the follow example, only ServiceOneImpl, ServiceTwoImpl and ServiceThreeImpl are managed by ServiceCentre as they are the only ones specified in the multibinding.
+
+        new AbstractModule() {
+            @Override
+            protected void configure() {
+                bind(ServiceOne.class).to(ServiceOneImpl.class);
+                bind(ServiceTwo.class).to(ServiceTwoImpl.class);
+                bind(ServiceThree.class).to(ServiceThreeImpl.class);
+                bind(ServiceFour.class).to(ServiceFourImpl.class);
+
+                Multibinder<Service> activeServices = Multibinder.newSetBinder(binder(), Service.class, Names.named("activeServices"));
+                activeServices.addBinding().to(AbstractServiceOne.class);
+                activeServices.addBinding().to(AbstractServiceTwo.class);
+                activeServices.addBinding().to(AbstractServiceThree.class);
+            }
+        };
