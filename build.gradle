@@ -3,7 +3,7 @@ apply(plugin: 'maven')
 apply(plugin: 'signing')
 
 group = 'com.toao'
-version = '0.1.0'
+version = '0.1.1-SNAPSHOT'
 
 task javadocJar(type: Jar, dependsOn: javadoc) {
     classifier = 'javadoc'
@@ -16,7 +16,9 @@ task sourcesJar(type: Jar) {
 }
 
 signing {
-    sign(configurations.archives);
+    if (hasProperty('shouldUploadArchives')) {
+        sign(configurations.archives)
+    }
 }
 
 artifacts {
@@ -30,21 +32,21 @@ repositories {
 }
 
 dependencies {
-    compile(
-            'com.google.inject:guice:3.0',
-            'org.slf4j:slf4j-api:1.7.10',
-            'ch.qos.logback:logback-classic:1.1.2',
+    compile 'org.slf4j:slf4j-api:1.7.10',
             'com.google.guava:guava:18.0',
-            'junit:junit:4.12',
-            'org.mockito:mockito-all:1.10.19',
-            'com.google.inject.extensions:guice-multibindings:3.0')
+            'com.google.inject:guice:3.0',
+            'com.google.inject.extensions:guice-multibindings:3.0'
+
+    testCompile 'junit:junit:4.12',
+                'org.mockito:mockito-all:1.10.19',
+                'ch.qos.logback:logback-classic:1.1.2'
 }
 
 task wrapper(type: Wrapper) {
     gradleVersion = '2.2.1'
 }
 
-if( hasProperty('shouldUploadArchives') )
+if(hasProperty('shouldUploadArchives'))
 {
     uploadArchives {
         repositories {
