@@ -16,7 +16,9 @@ task sourcesJar(type: Jar) {
 }
 
 signing {
-    sign(configurations.archives);
+    if (hasProperty('shouldUploadArchives')) {
+        sign(configurations.archives)
+    }
 }
 
 artifacts {
@@ -44,7 +46,7 @@ task wrapper(type: Wrapper) {
     gradleVersion = '2.2.1'
 }
 
-if( hasProperty('shouldUploadArchives') )
+if(hasProperty('shouldUploadArchives'))
 {
     uploadArchives {
         repositories {
